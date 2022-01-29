@@ -3,23 +3,24 @@ extern crate log;
 
 use solitude::{DatagramMessage, Session};
 
-use std::net::UdpSocket;
+use tokio::net::UdpSocket;
 
 use anyhow::Result;
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
 	env_logger::builder()
 		.filter_level(log::LevelFilter::Info)
 		.parse_env("RUST_LOG")
 		.init();
 
-	let udp_socket = UdpSocket::bind("127.0.0.1:0")?;
-	udp_socket.connect("127.0.0.1:7655")?;
+	let udp_socket = UdpSocket::bind("127.0.0.1:0").await?;
+	udp_socket.connect("127.0.0.1:7655").await?;
 
 	let port = udp_socket.local_addr()?.port();
 
-	let mut session = Session::new("echo_server", solitude::SessionStyle::Datagram)?;
-	session.forward("127.0.0.1", port)?;
+	let mut session = Session::new("echo_server", solitude::SessionStyle::Datagram).await?;
+	session.forward("127.0.0.1", port).await?;
 
 	info!("Listening on i2p at {}", session.address()?);
 
@@ -27,7 +28,7 @@ fn main() -> Result<()> {
 
 	loop {
 		info!("Waiting to receive");
-		let frame = udp_socket.recv(&mut buffer)?;
+		let frame = udp_socket.recv(&mut buffer).await?;
 		let buffer = &mut buffer[..frame];
 
 		debug!("Received datagram bytes: {:02x?}", buffer);
@@ -46,6 +47,6 @@ fn main() -> Result<()> {
 
 		let datagram_to_send_bytes = datagram_to_send.serialize();
 
-		udp_socket.send(&datagram_to_send_bytes)?;
+		udp_socket.send(&datagram_to_send_bytes).await?;
 	}
 }

@@ -3,102 +3,109 @@ extern crate log;
 
 use solitude::{DatagramMessage, Session, SessionStyle};
 
-use std::{net::UdpSocket, time::Duration, thread};
+use std::time::Duration;
 
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 
 use env_logger::Target;
 
-fn init() {
-	let _ = env_logger::builder().is_test(true).format_module_path(true).target(Target::Stdout).try_init();
+async fn init() {
+	let _ = env_logger::builder()
+		.is_test(true)
+		.format_module_path(true)
+		.target(Target::Stdout)
+		.try_init();
 
-	thread::sleep(Duration::from_secs(10));
+	tokio::time::sleep(Duration::from_secs(10)).await;
 }
 
-#[test]
-fn can_create_datagram_session() -> Result<()> {
-	init();
+#[tokio::test]
+async fn can_create_datagram_session() -> Result<()> {
+	eprintln!("init");
+	init().await;
 
-	let mut session = Session::new("can_create_datagram_session", SessionStyle::Datagram)?;
-	session.forward("127.0.0.1", 0)?;
+	eprintln!("inited");
+	let mut session = Session::new("can_create_datagram_session", SessionStyle::Datagram).await?;
+	eprintln!("Create");
+	session.forward("127.0.0.1", 0).await?;
+	eprintln!("forward");
 
-	session.close()?;
+	session.close().await?;
 	Ok(())
 }
 
-#[test]
-fn can_create_raw_session() -> Result<()> {
-	init();
+#[tokio::test]
+async fn can_create_raw_session() -> Result<()> {
+	init().await;
 
-	let mut session = Session::new("can_create_raw_session", SessionStyle::Raw)?;
-	session.forward("127.0.0.1", 0)?;
+	let mut session = Session::new("can_create_raw_session", SessionStyle::Raw).await?;
+	session.forward("127.0.0.1", 0).await?;
 
 	Ok(())
 }
 
-#[test]
-fn can_send_raw_datagram_to_service() -> Result<()> {
-	can_send_datagram_or_raw_to_service("can_send_raw_datagram_to_service", SessionStyle::Raw)?;
+#[tokio::test]
+async fn can_send_raw_datagram_to_service() -> Result<()> {
+	can_send_datagram_or_raw_to_service("can_send_raw_datagram_to_service", SessionStyle::Raw).await?;
 	Ok(())
 }
 
-#[test]
-fn can_send_datagram_to_service() -> Result<()> {
-	can_send_datagram_or_raw_to_service("can_send_datagram_to_service", SessionStyle::Datagram)?;
+#[tokio::test]
+async fn can_send_datagram_to_service() -> Result<()> {
+	can_send_datagram_or_raw_to_service("can_send_datagram_to_service", SessionStyle::Datagram).await?;
 	Ok(())
 }
 
-fn can_send_datagram_or_raw_to_service(name: &str, session_style: SessionStyle) -> Result<()> {
-	init();
+async fn can_send_datagram_or_raw_to_service(name: &str, session_style: SessionStyle) -> Result<()> {
+	init().await;
 
-	let server_socket = UdpSocket::bind("127.0.0.1:0")?;
-	server_socket.connect("127.0.0.1:7655")?;
+	let server_socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await?;
+	server_socket.connect("127.0.0.1:7655").await?;
 
 	let server_port = server_socket.local_addr()?.port();
 
-	let mut server_session = Session::new(format!("{}_server", name), session_style)?;
-	server_session.forward("127.0.0.1", server_port)?;
+	let mut server_session = Session::new(format!("{}_server", name), session_style).await?;
+	server_session.forward("127.0.0.1", server_port).await?;
 
 	info!("server on 127.0.0.1:{} or {}", server_port, server_session.address()?);
-	
+
 	//I2Pd can take a while to shuffle...
-	thread::sleep(Duration::from_secs(3));
-	
-	let client_socket = UdpSocket::bind("127.0.0.1:0")?;
-	client_socket.connect("127.0.0.1:7655")?;
+	tokio::time::sleep(Duration::from_secs(3)).await;
+
+	let client_socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await?;
+	client_socket.connect("127.0.0.1:7655").await?;
 
 	let client_port = client_socket.local_addr()?.port();
 
-	let mut client_session = Session::new(format!("{}_client", name), session_style)?;
-	client_session.forward("127.0.0.1", client_port)?;
+	let mut client_session = Session::new(format!("{}_client", name), session_style).await?;
+	client_session.forward("127.0.0.1", client_port).await?;
 
 	info!("client on 127.0.0.1:{} or {}", client_port, client_session.address()?);
-	
+
 	let datagram = DatagramMessage::new(format!("{}_client", name), server_session.public_key, b"Hello World!".to_vec());
 	let datagram_bytes = datagram.serialize();
 
-	let handle = thread::spawn(move || -> Result<()> {
+	let handle = tokio::task::spawn(async move {
 		let mut buffer = [0u8; 2048];
-		
-		server_socket.set_read_timeout(Some(Duration::from_secs(40))).context("failed to set timeout")?;
-		server_socket.recv(&mut buffer).context("failed to receive")?;
-		
-		Ok(())
+
+		// 		server_socket.set_read_timeout(Some(Duration::from_secs(40))).await.context("failed to set timeout").unwrap(); TODO
+		server_socket.recv(&mut buffer).await.context("failed to receive").unwrap();
 	});
-	
+
 	for _ in 0..10 {
-		thread::sleep(Duration::from_millis(100));
-		let _ = client_socket.send(&datagram_bytes).context("failed to send")?;
+		tokio::time::sleep(Duration::from_millis(100)).await;
+		let n = client_socket.send(&datagram_bytes).await.context("failed to send")?;
+		info!("sent {} bytes", n);
 	}
 
-	handle.join().unwrap().context("bad result (?)")?;
-	
+	handle.await.context("bad result (?)")?;
+
 	Ok(())
 }
 
-#[test]
-fn can_create_datagram_message() -> Result<()> {
-	init();
+#[tokio::test]
+async fn can_create_datagram_message() -> Result<()> {
+	init().await;
 
 	let contents: [u8; 32] = rand::random();
 	let _datagram_message = DatagramMessage::new("test", "test_destination", contents.to_vec());
@@ -106,9 +113,9 @@ fn can_create_datagram_message() -> Result<()> {
 	Ok(())
 }
 
-#[test]
-fn can_serialize_datagram_message() -> Result<()> {
-	init();
+#[tokio::test]
+async fn can_serialize_datagram_message() -> Result<()> {
+	init().await;
 
 	let contents: [u8; 32] = rand::random();
 	let datagram_message = DatagramMessage::new("test", "test_destination", contents.to_vec());
@@ -117,9 +124,9 @@ fn can_serialize_datagram_message() -> Result<()> {
 	Ok(())
 }
 
-#[test]
-fn can_deserialize_datagram_message() -> Result<()> {
-	init();
+#[tokio::test]
+async fn can_deserialize_datagram_message() -> Result<()> {
+	init().await;
 
 	let example_received_datagram_bytes = [
 		0x4a, 0x37, 0x61, 0x67, 0x75, 0x4b, 0x7e, 0x6a, 0x6c, 0x65, 0x75, 0x7e, 0x7a, 0x50, 0x7a, 0x64, 0x63, 0x64, 0x59, 0x36, 0x77, 0x47,

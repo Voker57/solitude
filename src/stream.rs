@@ -1,6 +1,5 @@
-use std::io::{BufRead, BufReader};
-
 use crate::*;
+use tokio::io::AsyncBufReadExt;
 
 // TODO: add FROM_PORT and TO_PORT
 pub struct StreamInfo {
@@ -8,13 +7,11 @@ pub struct StreamInfo {
 }
 
 impl StreamInfo {
-	pub fn from_bufread<T: BufRead>(stream: &mut T) -> Result<Self> {
+	pub async fn from_bufread<T: tokio::io::AsyncBufRead + std::marker::Unpin>(stream: &mut T) -> Result<Self> {
 		debug!("deserializing stream info");
 
-		let mut reader = BufReader::new(stream);
-
 		let mut header = String::new();
-		reader.read_line(&mut header)?;
+		stream.read_line(&mut header).await?;
 
 		let expression = regex::Regex::new("^[^ ]+")?;
 
